@@ -19,6 +19,25 @@ export function expected(options = {}) {
   return {items, summary: {total: items.length, unresolved: items.filter(x => x.status !== 'resolved').length, highSeverity: items.filter(x => ranks[x.severity] >= 3).length, openedByDay: [...counts].sort().map(([date, count]) => ({date, count}))}};
 }
 export const csvRows = items => [fields, ...items.map(row => fields.map(key => row[key] === null ? '' : Array.isArray(row[key]) ? JSON.stringify(row[key]) : String(row[key])))];
+// Use canonical matches and independent per-service subsets, never server helpers.
+export function expectedOverview(options = {}) {
+  const {items} = expected(options);
+  const services = [...new Set(items.map(row => row.service))].map(service => {
+    const matching = items.filter(row => row.service === service);
+    const resolved = matching.filter(row => row.status === 'resolved');
+    return {
+      service,
+      incidentCount: matching.length,
+      unresolvedCount: matching.filter(row => ['open', 'in_progress'].includes(row.status)).length,
+      highSeverityCount: matching.filter(row => ['critical', 'high'].includes(row.severity)).length,
+      averageResolutionHours: resolved.length
+        ? resolved.reduce((sum, row) => sum + (Date.parse(row.resolvedAt) - Date.parse(row.openedAt)), 0) / resolved.length / 3600000
+        : null,
+    };
+  });
+  services.sort((a, b) => b.unresolvedCount - a.unresolvedCount || a.service.localeCompare(b.service));
+  return {total: items.length, services};
+}
 export function parseCSV(text) {
   const result = []; let row = [], cell = '', quoted = false;
   for (let i = 0; i < text.length; i++) {

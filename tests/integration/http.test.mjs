@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { createAppServer } from '../../server/app.mjs';
-import { rows, expected, parseCSV, csvRows } from './oracle.js';
+import { rows, expected, expectedOverview, parseCSV, csvRows } from './oracle.js';
+
+const request = (url, options = {}) => fetch(url, {signal: AbortSignal.timeout(5000), ...options});
 
 function parameters(options) {
   const result = new URLSearchParams();
@@ -21,14 +23,14 @@ async function close(server) {
   });
 }
 
-test('integration: canonical data through real HTTP, complete pages, summaries, details and CSV', async t => {
+test('integration: canonical data through real HTTP, complete pages, summaries, details and CSV', {timeout: 120000}, async t => {
   const server = await createAppServer();
   try {
     server.listen(0, '127.0.0.1');
-    await once(server, 'listening');
+    await once(server, 'listening', {signal: AbortSignal.timeout(5000)});
     const base = `http://127.0.0.1:${server.address().port}`;
     const list = async (options = {}) => {
-      const response = await fetch(`${base}/api/incidents?${parameters(options)}`);
+      const response = await request(`${base}/api/incidents?${parameters(options)}`);
       assert.equal(response.status, 200);
       const actual = await response.json();
       const oracle = expected(options);
@@ -48,6 +50,21 @@ test('integration: canonical data through real HTTP, complete pages, summaries, 
       assert.equal(initial.items.length, 25);
       assert.equal(initial.summary.openedByDay.length, 90);
       assert.equal(initial.summary.openedByDay.reduce((n, day) => n + day.count, 0), rows.length);
+    });
+
+    await t.test('overview independently matches canonical full filters across pages, null averages and empty results', async () => {
+      const combined = {q: 'INCIDENT', service: ['Accounts', 'Billing'], status: ['open', 'resolved'], severity: ['critical', 'high'], from: '2026-04-01', to: '2026-06-29'};
+      assert.ok(expectedOverview(combined).total > 50);
+      for (const options of [{}, combined, {status: ['open', 'in_progress']}, {status: ['resolved']}, {from: '2026-04-01', to: '2026-04-01'}, {q: 'no incident matches this'}]) {
+        const oracle = expectedOverview(options);
+        for (const controls of [{}, {page: 2, pageSize: 50, sort: 'severity', direction: 'asc'}, {page: 99999, sort: 'openedAt', direction: 'desc'}]) {
+          const response = await fetch(`${base}/api/overview?${parameters({...options, ...controls})}`, {signal: AbortSignal.timeout(5000)});
+          assert.equal(response.status, 200);
+          assert.deepEqual(await response.json(), oracle);
+        }
+        if (options.status?.includes('in_progress')) assert.ok(oracle.services.every(service => service.averageResolutionHours === null));
+        if (options.q === 'no incident matches this') assert.deepEqual(oracle, {total: 0, services: []});
+      }
     });
 
     await t.test('search, OR facets, AND across facets and inclusive UTC boundaries', async () => {
@@ -94,11 +111,11 @@ test('integration: canonical data through real HTTP, complete pages, summaries, 
     await t.test('every detail field for all incidents is unchanged', async () => {
       // Sequential requests avoid creating an artificial connection-pressure failure.
       for (const row of rows) {
-        const response = await fetch(`${base}/api/incidents/${row.id}`);
+        const response = await request(`${base}/api/incidents/${row.id}`);
         assert.equal(response.status, 200);
         assert.deepEqual(await response.json(), row);
       }
-      const missing = await fetch(`${base}/api/incidents/INC-999999`);
+      const missing = await request(`${base}/api/incidents/INC-999999`);
       assert.equal(missing.status, 404);
       assert.equal((await missing.json()).error.code, 'NOT_FOUND');
     });
@@ -110,7 +127,7 @@ test('integration: canonical data through real HTTP, complete pages, summaries, 
         { q: 'Note:', service: ['Accounts', 'Billing'], status: ['open', 'resolved'] },
         { q: 'no incident matches this' },
       ]) {
-        const response = await fetch(`${base}/api/export.csv?${parameters({ ...options, page: 2, pageSize: 25 })}`);
+        const response = await request(`${base}/api/export.csv?${parameters({ ...options, page: 2, pageSize: 25 })}`);
         assert.equal(response.status, 200);
         assert.match(response.headers.get('content-type'), /text\/csv/);
         assert.match(response.headers.get('content-disposition'), /attachment/);
@@ -146,10 +163,10 @@ test('integration: exact npm run start serves the app and the owned process grou
       });
     });
     clearTimeout(startupTimer);
-    const response = await fetch(endpoint);
+    const response = await request(endpoint);
     assert.equal(response.status, 200);
     assert.match(response.headers.get('content-type'), /text\/html/);
-    const incidents = await fetch(`${endpoint}/api/incidents`);
+    const incidents = await request(`${endpoint}/api/incidents`);
     assert.deepEqual((await incidents.json()).items, expected().items.slice(0, 25));
   } finally {
     clearTimeout(startupTimer);
