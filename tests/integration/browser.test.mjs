@@ -5,9 +5,9 @@ import {mkdir, readFile} from 'node:fs/promises';
 import {dirname, resolve} from 'node:path';
 import {once} from 'node:events';
 import {createAppServer} from '../../server/app.mjs';
-import {expected, rows, parseCSV, csvRows} from './oracle.js';
+import {expected, expectedOverview, rows, parseCSV, csvRows} from './oracle.js';
 
-const alias = dirname(execFileSync('bash', ['-c', 'command -v qualification-chromium'], {encoding: 'utf8'}).trim());
+const alias = dirname(execFileSync('bash', ['-c', 'command -v qualification-chromium'], {encoding: 'utf8', timeout: 5000}).trim());
 process.env.PLAYWRIGHT_BROWSERS_PATH = resolve(alias, '../browsers');
 await mkdir('.runtime/browser-tmp', {recursive: true});
 for (const key of ['TMPDIR', 'TMP', 'TEMP']) process.env[key] = '.runtime/browser-tmp';
@@ -44,7 +44,7 @@ test('real Chromium: correctness, persisted views, keyboard, phone and overlappi
   const before = await readFile('.runtime/incidents.json');
   let server, browser, context, port;
   const start = async () => {
-    server = await createAppServer(); server.listen(port || 0, '127.0.0.1'); await once(server, 'listening'); port = server.address().port;
+    server = await createAppServer(); server.listen(port || 0, '127.0.0.1'); await once(server, 'listening', {signal: AbortSignal.timeout(5000)}); port = server.address().port;
   };
   const stop = async () => {
     if (!server?.listening) return;
@@ -67,6 +67,9 @@ test('real Chromium: correctness, persisted views, keyboard, phone and overlappi
     const check = async (options = {}) => {
       await expect(page.locator('#results')).toHaveAttribute('aria-busy', 'false');
       await expect(page.locator('#freshness')).toHaveText('Current selections');
+      await expect(page.locator('#overview')).toHaveAttribute('aria-busy', 'false');
+      await expect(page.locator('#overview')).toHaveAttribute('data-stale', 'false');
+      assert.deepEqual(await page.locator('#service-cards article').evaluateAll(cards => cards.map(card => ({service: card.querySelector('h4').textContent, values: [...card.querySelectorAll('dd')].map(x => x.textContent)}))), expectedOverview(options).services.map(entry => ({service: entry.service, values: [entry.incidentCount, entry.unresolvedCount, entry.highSeverityCount].map(String).concat(entry.averageResolutionHours === null ? 'Unavailable' : entry.averageResolutionHours.toLocaleString('en-US', {maximumFractionDigits: 2}))})));
       const {items, summary} = expected(options);
       const size = options.pageSize || 25, n = options.page || 1;
       const address = new URL(page.url()).searchParams;
@@ -239,7 +242,10 @@ test('real Chromium: correctness, persisted views, keyboard, phone and overlappi
       await expect(page.locator('#result-message button')).toHaveText('Retry'); await expect(page.locator('#results')).toHaveAttribute('aria-busy', 'false');
       await expect(page.getByLabel('Search ID, title or description')).toHaveValue('Search');
       await search('Notifications'); await expect(page.locator('#result-message button')).toHaveText('Retry');
-      await start(); await throttle(0); await page.locator('#result-message').getByRole('button', {name: 'Retry'}).click(); await check({q: 'Notifications'});
+      await start(); await throttle(0);
+      await page.locator('#result-message').getByRole('button', {name: 'Retry'}).click();
+      await page.locator('#overview-message').getByRole('button', {name: 'Retry'}).click();
+      await check({q: 'Notifications'});
       // A real detail connection failure is retried for the newly selected ID.
       await stop(); await page.locator('#rows button').first().click();
       await expect(page.locator('#detail-content button')).toHaveText('Retry');
