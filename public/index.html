@@ -23,11 +23,13 @@
         <button id="clear" type="button" class="secondary">Clear search and filters</button>
       </form>
       <section class="saved" aria-labelledby="saved-title"><h2 id="saved-title">Saved views</h2><form id="save-form"><label for="view-name">Name this view</label><input id="view-name" maxlength="80" required placeholder="e.g. Billing follow-up"><button type="submit" class="secondary">Save current view</button></form><p id="storage-message" role="status"></p><ul id="views"></ul></section>
+      <section class="triage" aria-labelledby="triage-title"><h2 id="triage-title">Personal triage</h2><p class="muted">Add from complete details. Notes stay in this browser, separately from views and shared addresses.</p><p id="triage-message" role="status"></p><ul id="triage-list"></ul></section>
     </aside>
     <section id="results" tabindex="-1" aria-labelledby="result-title">
       <div class="section-heading"><div><p class="eyebrow">All matching incidents</p><h2 id="result-title">Results overview</h2></div><span id="freshness" class="muted"></span></div>
       <div id="active-filters" class="chips" aria-label="Active selections"></div>
       <div id="summary" class="summary"></div>
+      <section id="overview" aria-labelledby="overview-title"><h3 id="overview-title">Service comparison</h3><p class="muted">Across all matching incidents: unresolved means open or in progress; high severity includes critical and high. Average resolution uses only resolved incidents, in hours; unavailable means none are resolved.</p><p id="overview-selection" class="muted"></p><div id="overview-message" class="operation-message"></div><div id="service-cards"></div></section>
       <section class="chart" aria-labelledby="chart-title"><h3 id="chart-title">Opened by day · UTC</h3><p class="muted">Counts cover the entire matching result.</p><div id="chart-bars" aria-hidden="true"></div><details><summary>Read daily counts</summary><p id="chart-text"></p></details></section>
       <div class="table-controls"><div><label for="sort">Sort by</label><select id="sort"><option value="openedAt">Opened date</option><option value="severity">Severity</option></select></div><div><label for="direction">Order</label><select id="direction"><option value="desc">Newest / highest first</option><option value="asc">Oldest / lowest first</option></select></div><div><label for="page-size">Rows per page</label><select id="page-size"><option value="25">25</option><option value="50">50</option></select></div></div>
       <div id="result-message" class="operation-message"></div>
