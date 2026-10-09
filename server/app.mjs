@@ -58,12 +58,16 @@ function parseQuery(params, exporting) {
   return query;
 }
 
-function matching(rows, query) {
-  const result = rows.filter(row =>
+function filtered(rows, query) {
+  return rows.filter(row =>
     ['id', 'title', 'description'].some(key => row[key].toLowerCase().includes(query.q)) &&
     Object.keys(facets).every(key => !query[key].length || query[key].includes(row[key])) &&
     (!query.from || row.openedAt.slice(0, 10) >= query.from) &&
     (!query.to || row.openedAt.slice(0, 10) <= query.to));
+}
+
+function matching(rows, query) {
+  const result = filtered(rows, query);
   const sign = query.direction === 'asc' ? 1 : -1;
   result.sort((a, b) => {
     if (query.sort === 'severity') {
@@ -87,6 +91,30 @@ function summary(rows) {
     unresolved: rows.filter(row => row.status !== 'resolved').length,
     highSeverity: rows.filter(row => ['critical', 'high'].includes(row.severity)).length,
     openedByDay: [...days].sort(([a], [b]) => compare(a, b)).map(([date, count]) => ({ date, count })),
+  };
+}
+
+function overview(rows) {
+  const services = new Map();
+  for (const row of rows) {
+    if (!services.has(row.service)) {
+      services.set(row.service, { service: row.service, incidentCount: 0, unresolvedCount: 0, highSeverityCount: 0, resolvedCount: 0, resolutionMilliseconds: 0 });
+    }
+    const service = services.get(row.service);
+    service.incidentCount++;
+    if (row.status !== 'resolved') service.unresolvedCount++;
+    else {
+      service.resolvedCount++;
+      service.resolutionMilliseconds += Date.parse(row.resolvedAt) - Date.parse(row.openedAt);
+    }
+    if (['critical', 'high'].includes(row.severity)) service.highSeverityCount++;
+  }
+  return {
+    total: rows.length,
+    services: [...services.values()].map(({ resolvedCount, resolutionMilliseconds, ...service }) => ({
+      ...service,
+      averageResolutionHours: resolvedCount ? resolutionMilliseconds / resolvedCount / 3600000 : null,
+    })).sort((a, b) => b.unresolvedCount - a.unresolvedCount || compare(a.service, b.service)),
   };
 }
 
@@ -125,6 +153,10 @@ export async function createAppServer() {
         return json(response, 405, { error: { code: 'METHOD_NOT_ALLOWED', message: 'Use GET for this read-only server' } });
       }
       const url = new URL(request.url, 'http://127.0.0.1');
+      if (url.pathname === '/api/overview') {
+        const query = parseQuery(url.searchParams, false);
+        return json(response, 200, overview(filtered(rows, query)));
+      }
       if (url.pathname === '/api/incidents' || url.pathname === '/api/export.csv') {
         const exporting = url.pathname === '/api/export.csv';
         const query = parseQuery(url.searchParams, exporting);
