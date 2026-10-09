@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {createState, transition, announcement, queryParams} from '../../public/state.js';
+import {createState, transition, announcement, queryParams, ownedDetail} from '../../public/state.js';
+import {createTriage} from '../../public/triage.js';
 import {expected, rows} from './oracle.js';
 
 const send = (state, type, payload = {}) => transition(state, {type, ...payload});
@@ -70,4 +71,31 @@ test('address navigation supersedes all writers, failure and late cleanup; retry
   state = send(state, 'result:success', {token: state.resultOp.token, data: data({q: 'Search'})});
   assert.equal(state.intent.page, 1); assert.deepEqual(state.result.data.summary, expected({q: 'Search'}).summary);
   assert.equal(state.result.intent, state.intent);
+});
+
+
+test('triage actions require owned details across close/reselection, retaining notes after write failure', () => {
+  let raw = null, fail = false;
+  const triage = createTriage({getItem: () => raw, setItem: (_, value) => { if (fail) throw new Error('Storage full'); raw = value; }});
+  let state = send(createState(), 'result:start');
+  state = send(state, 'result:success', {token: state.resultOp.token, data: data({})});
+  const result = state.result, intent = state.intent;
+  const addOwned = () => triage.add(ownedDetail(state));
+  state = send(state, 'detail:select', {id: rows[0].id}); state = send(state, 'detail:start'); const old = state.detail.token;
+  assert.equal(addOwned(), false);
+  state = send(state, 'detail:close'); state = send(state, 'detail:select', {id: rows[1].id}); state = send(state, 'detail:start');
+  for (const type of ['detail:success', 'detail:failure', 'detail:finish']) assert.equal(send(state, type, {token: old, data: rows[0], error: 'obsolete'}), state);
+  assert.equal(addOwned(), false);
+  state = send(state, 'detail:success', {token: state.detail.token, data: rows[1]});
+  assert.equal(addOwned(), true); triage.edit(rows[1].id, '<text> & "punctuation"');
+  state = send(state, 'detail:close'); assert.equal(addOwned(), false);
+  state = send(state, 'detail:select', {id: rows[0].id}); state = send(state, 'detail:start');
+  state = send(state, 'detail:failure', {token: state.detail.token, error: 'Current detail failed'}); assert.equal(addOwned(), false);
+  state = send(state, 'detail:start'); state = send(state, 'detail:success', {token: state.detail.token, data: rows[0]});
+  fail = true; assert.equal(addOwned(), true); triage.edit(rows[0].id, 'Memory survives');
+  assert.deepEqual(triage.entries.map(x => x.id), [rows[1].id, rows[0].id]);
+  assert.equal(triage.entries[0].note, '<text> & "punctuation"');
+  assert.match(triage.limitation, /could not save/);
+  triage.remove(rows[1].id); assert.equal(triage.entries[0].note, 'Memory survives');
+  assert.equal(state.result, result); assert.equal(state.intent, intent);
 });
